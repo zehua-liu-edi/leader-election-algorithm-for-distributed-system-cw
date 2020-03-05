@@ -23,6 +23,8 @@ public class Network {
     private Map<Integer, String> msgToDeliver; //Integer for the id of the sender and String for the message
     private List<Integer> elect_round;
     private Map<Integer, ArrayList<String>> elect_nodes;
+    private List<Integer> fail_round;
+    private Map<Integer, String> fail_node;
     private Map<String, Node> savedNode;
     public final String lock = "";
 
@@ -37,12 +39,16 @@ public class Network {
         elect_round = new ArrayList<Integer>();
         //map to store which nodes start to elect on specific round
         elect_nodes = new HashMap<Integer, ArrayList<String>>();
+        //list to store all elect rounds
+        fail_round = new ArrayList<Integer>();
+        //map to store which nodes start to elect on specific round
+        fail_node = new HashMap<Integer, String>();
 
 
         round = 1;
 
         this.parseFile("input/ds_graph.txt");
-        this.parseElectFile("input/ds_elect.txt");
+        this.parseElectFile("input/ds_fail.txt");
 
         for (Node node : nodes) {
             node.setNetwork(this);
@@ -51,7 +57,7 @@ public class Network {
         startElection();
     }
 
-    public void startElection() throws InterruptedException {
+    public void startElection(){
         long start_time = System.currentTimeMillis();
         boolean thing_todo = false;
         int leader_node = -1;
@@ -60,10 +66,9 @@ public class Network {
         Code to call methods for parsing the input file, initiating the system and producing the log can be added here.
         */
         System.out.println("This is round"+round+"\n");
-        while (round<30)
+        while (round<150)
         {
             thing_todo = false;
-            leader_node = -1;
             start_time = System.currentTimeMillis();
             while ((System.currentTimeMillis() - start_time) < period)
             {
@@ -101,6 +106,8 @@ public class Network {
     {
         return this.round;
     }
+
+    public int getNetSize(){ return nodes.size();}
 
     private void parseFile(String filename) throws IOException {
    		/*
@@ -140,7 +147,8 @@ public class Network {
 
             if(previous_node!=null)
             {
-                savedNode.get(previous_node).setNextNode(head_node);
+                savedNode.get(previous_node).next_neighbour = head_node;
+                head_node.prev_neighbour = savedNode.get(previous_node);
                 if(!savedNode.get(previous_node).getNeighbors().contains(head_node))
                     savedNode.get(previous_node).addNeighbour(head_node);
                 if(!head_node.getNeighbors().contains(savedNode.get(previous_node)))
@@ -175,7 +183,8 @@ public class Network {
         //link the tail and the head of the ring
         if(start_node!=null)
         {
-            savedNode.get(previous_node).setNextNode(start_node);
+            savedNode.get(previous_node).next_neighbour = start_node;
+            start_node.prev_neighbour = savedNode.get(previous_node);
             start_node.addNeighbour(savedNode.get(previous_node));
             savedNode.get(previous_node).addNeighbour(start_node);
             System.out.println("node "+previous_node+" and "+start_node+" becomes neighbours");
@@ -222,17 +231,9 @@ public class Network {
 
             if(element_in_line[0].equals(fail_parse))
             {
-                elect_round.add(Integer.parseInt(element_in_line[1]));
 
-                ArrayList<String> temp = new ArrayList<String>();
+                savedNode.get(element_in_line[2]).setFail_round(Integer.parseInt(element_in_line[1]));
 
-                for (int i = 2; i < element_in_line.length; i++) {
-
-                    System.out.println(element_in_line[i] + " is going to start elect in round " + element_in_line[1]);
-
-                    temp.add(element_in_line[i]);
-                }
-                elect_nodes.put(Integer.parseInt(element_in_line[1]), temp);
             }
 
         }
@@ -262,9 +263,15 @@ public class Network {
 
             try {
                 for (Integer key : msgToDeliver.keySet()) {
-                    if(msgToDeliver.get(key).equals(Character.toString('0')))
+                    String message_to_deliver = msgToDeliver.get(key);
+                    if(message_to_deliver.equals(Character.toString('0')))
                     {
                         continue;
+                    }
+                    if(message_to_deliver.startsWith("FAILELECT"))
+                    {
+                        for (Node node:savedNode.get(Integer.toString(key)).getNeighbors())
+                            node.receiveMsg(message_to_deliver);
                     }
                     savedNode.get(Integer.toString(key)).getNextNode().receiveMsg(msgToDeliver.get(key));
                     msgToDeliver.put(key, Character.toString('0'));
@@ -297,6 +304,7 @@ public class Network {
                 node.prev_neighbour = node.myNeighbours.get(0);
             }
         }
+        nodes.remove(failed_node);
     }
 
 

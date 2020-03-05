@@ -9,7 +9,6 @@ public class Node extends Thread {
     private boolean participant = false;
     private boolean leader = false;
     private int leader_id = 0;
-    private boolean start_election = false;
     private int fail_round = 0;
     private Network network;
 
@@ -23,17 +22,16 @@ public class Node extends Thread {
 
     public Node prev_neighbour;
 
+    public boolean start_election = false;
+
+    public boolean fail_election = false;
+
     public Node(int id){
 
         this.id = id;
 
         myNeighbours = new ArrayList<Node>();
         incomingMsg = new ArrayList<String>();
-    }
-
-    public void setFail_round(int fail_round)
-    {
-        this.fail_round = fail_round;
     }
 
     public void setLeaderId(int incom_id)
@@ -51,11 +49,6 @@ public class Node extends Thread {
         return this.leader;
     }
 
-    public void setNextNode(Node nextNode)
-    {
-        this.next_neighbour = nextNode;
-    }
-
     public Node getNextNode()
     {
         return this.next_neighbour;
@@ -67,17 +60,17 @@ public class Node extends Thread {
         participant = condition;
     }
 
-    public boolean isParticipant()
-    {
-        return participant;
-    }
-
     public void setNetwork(Network network)
     {
         this.network = network;
         System.out.println("thread "+id+" has set network");
     }
     // Basic methods for the Node class
+
+    public void setFail_round(int fail_round)
+    {
+        this.fail_round = fail_round;
+    }
 
     public int getNodeId() {
 		/*
@@ -107,6 +100,8 @@ public class Node extends Thread {
 		this.myNeighbours.add(n);
     }
 
+
+
     public void receiveMsg(String m) {
 		/*
 		Method that implements the reception of an incoming message by a node
@@ -124,8 +119,48 @@ public class Node extends Thread {
 		This method need only implement the logic of the network receiving an outgoing message from a node.
 		The remainder of the logic will be implemented in the network class.
 		*/
+		if(m.startsWith("FAILELECT"))
+        {
+
+        }
 		network.addMessage(id, m);
         incomingMsg.clear();
+    }
+
+    public void general_elect()
+    {
+        incomingMsg.sort(Collections.reverseOrder());
+        System.out.println(id+" has incoming message "+incomingMsg);
+
+        //if not participant send the max of income and id, set participant
+        if(!participant)
+        {
+            System.out.println(id + "not participant and sends "+incomingMsg.get(0) +" to "+ next_neighbour+" in round "+network.getRound());
+            this.sendMsg(Integer.toString(Math.max(Integer.parseInt(incomingMsg.get(0)), id)));
+            this.setParticipant(true);
+        }
+        //if participant, send m.id if m.id bigger or do nothing if m.id smaller
+        else {
+            if(Integer.parseInt(incomingMsg.get(0))>id)
+            {
+                System.out.println(id + "participant and sends "+incomingMsg.get(0) +" to "+ next_neighbour+" in round "+network.getRound());
+                this.sendMsg(incomingMsg.get(0));
+            }
+            else if(Integer.parseInt(incomingMsg.get(0))==id)
+            {
+                this.leader = true;
+                this.setLeaderId(id);
+                this.sendMsg("LEADER "+id);
+            }
+        }
+    }
+
+    public void fail_elect()
+    {
+        if(fail_election)
+        {
+            for ()
+        }
     }
 
     public void run() {
@@ -134,6 +169,9 @@ public class Node extends Thread {
             if(network.getRound()==fail_round)
             {
                 network.informNodeFailure(id);
+                fail_round = 0;
+                System.out.println("This node "+id +" fails and quit");
+                break;
             }
             if(leader)
                 System.out.println("the leader is "+id +" and this is round"+ network.getRound());
@@ -152,6 +190,7 @@ public class Node extends Thread {
                     String[] whole_message = message.split("\\s+");
                     if(message.startsWith("ELECT")||message.startsWith("FORWARD"))
                     {
+                        System.out.println();
                         incomingMsg.set(i, whole_message[1]);
                     }
                     /*if a message starts with leader, that means that this election has been done
@@ -167,39 +206,17 @@ public class Node extends Thread {
                             System.out.println(id+" set its leader "+whole_message[1] +" and forward "+" in round "+network.getRound());
                             this.setLeaderId(Integer.parseInt(whole_message[1]));
                             this.sendMsg("LEADER "+whole_message[1]);
-                            incomingMsg.clear();
                         }
+                        incomingMsg.clear();
+                        this.setParticipant(false);
                         break;
                     }
+
                 }
 
                 if(!incomingMsg.isEmpty())
                 {
-                    incomingMsg.sort(Collections.reverseOrder());
-                    System.out.println(id+" has incoming message "+incomingMsg);
-
-                    //if not participant send the max of income and id, set participant
-                    if(!participant)
-                    {
-                        System.out.println(id + "not participant and sends "+incomingMsg.get(0) +" to "+ next_neighbour+" in round "+network.getRound());
-                        this.sendMsg(Integer.toString(Math.max(Integer.parseInt(incomingMsg.get(0)), id)));
-                        this.setParticipant(true);
-                    }
-                    //if participant, send m.id if m.id bigger or do nothing if m.id smaller
-                    else {
-                        if(Integer.parseInt(incomingMsg.get(0))>id)
-                        {
-                            System.out.println(id + "participant and sends "+incomingMsg.get(0) +" to "+ next_neighbour+" in round "+network.getRound());
-                            this.sendMsg(incomingMsg.get(0));
-                        }
-                        else if(Integer.parseInt(incomingMsg.get(0))==id)
-                        {
-                            this.leader = true;
-                            this.setLeaderId(id);
-                            this.sendMsg("LEADER "+id);
-                            break;
-                        }
-                    }
+                    general_elect();
                 }
 
             }
