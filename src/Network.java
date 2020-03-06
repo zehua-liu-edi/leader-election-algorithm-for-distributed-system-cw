@@ -21,6 +21,7 @@ public class Network {
     private int round;
     private int period = 20;
     private Map<Integer, String> msgToDeliver; //Integer for the id of the sender and String for the message
+    private Map<Integer, String> treeBoardcastMsg; //Integer for the id of the sender and String for the message
     private List<Integer> elect_round;
     private Map<Integer, ArrayList<String>> elect_nodes;
     private List<Integer> fail_round;
@@ -33,6 +34,8 @@ public class Network {
         nodes = new ArrayList<Node>();
         //map to store what to deliver each round
         msgToDeliver = new HashMap<Integer, String>();
+
+        treeBoardcastMsg = new HashMap<Integer, String>();
         //map to match the id to the node
         savedNode = new HashMap<String, Node>();
         //list to store all elect rounds
@@ -91,6 +94,7 @@ public class Network {
                 if(!thing_todo && round>1)
                 {
                     deliverMessages();
+                    deliverTreeBroadcastMessages();
                     synchronized (Network.class)
                     {
                         Network.class.notifyAll();
@@ -252,6 +256,60 @@ public class Network {
         this.msgToDeliver.put(id, m);
     }
 
+
+    public synchronized void addBroadcastMessage(int id, String m){
+		/*
+		At each round, the network collects all the messages that the nodes want to send to their neighbours.
+		Implement this logic here.
+		*/
+        this.treeBoardcastMsg.put(id, m);
+    }
+
+    public synchronized void deliverTreeBroadcastMessages() {
+		/*
+		At each round, the network delivers all the messages that it has collected from the nodes.
+		Implement this logic here.
+		The network must ensure that a node can send only to its neighbours, one message per round per neighbour.
+		0 means no message to send or the sender will send the message to all his neighbours
+		*/
+
+        try {
+            for (Integer key : treeBoardcastMsg.keySet()) {
+                String message_to_deliver = treeBoardcastMsg.get(key);
+                Node sender = savedNode.get(Integer.toString(key));
+                Node parent = savedNode.get(sender.parent);
+                /*
+                If message equals to zero, it means no broadcast message will be sent in this round
+                */
+                if(message_to_deliver.equals(Character.toString('0')))
+                {
+                    continue;
+                }
+                if(message_to_deliver.startsWith("TREECONSTRUCT"))
+                {
+                    for (Node node:sender.getNeighbors())
+                    {
+                        if(node!=parent)
+                            node.receiveMsg(message_to_deliver);
+                    }
+                }
+                else if(message_to_deliver.startsWith("TREELEADER"))
+                {
+                    for (String children : sender.children)
+                    {
+                        Node child = savedNode.get(children);
+                        child.receiveMsg(message_to_deliver);
+                    }
+                }
+                treeBoardcastMsg.put(key, Character.toString('0'));
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+
+
+    }
+
     public synchronized void deliverMessages() {
 		/*
 		At each round, the network delivers all the messages that it has collected from the nodes.
@@ -264,16 +322,26 @@ public class Network {
             try {
                 for (Integer key : msgToDeliver.keySet()) {
                     String message_to_deliver = msgToDeliver.get(key);
+                    String[] whole_message = message_to_deliver.split("\\s+");
+                    Node sender = savedNode.get(Integer.toString(key));
+                    Node parent = savedNode.get(sender.parent);
                     if(message_to_deliver.equals(Character.toString('0')))
                     {
                         continue;
                     }
-                    if(message_to_deliver.startsWith("FAILELECT"))
+                    else if(message_to_deliver.startsWith("TREEREPLAY"))
                     {
-                        for (Node node:savedNode.get(Integer.toString(key)).getNeighbors())
-                            node.receiveMsg(message_to_deliver);
+                        System.out.println("wants to send "+message_to_deliver);
+                        String node_to_send = whole_message[1];
+                        savedNode.get(node_to_send).receiveMsg(message_to_deliver);
                     }
-                    savedNode.get(Integer.toString(key)).getNextNode().receiveMsg(msgToDeliver.get(key));
+                    else if(message_to_deliver.startsWith("TREEELECT"))
+                    {
+                        if(parent!=null)
+                            parent.receiveMsg(message_to_deliver);
+                    }
+                    else
+                        sender.getNextNode().receiveMsg(message_to_deliver);
                     msgToDeliver.put(key, Character.toString('0'));
                 }
             } catch (Exception e) {
@@ -288,6 +356,7 @@ public class Network {
 		Method to inform the neighbours of a failed node about the event.
 		*/
         Node failed_node = savedNode.get(Integer.toString(id));
+        failed_node.next_neighbour.receiveMsg("FAIL " + id);
         for (Node node : failed_node.getNeighbors())
         {
             node.myNeighbours.remove(failed_node);
@@ -295,16 +364,9 @@ public class Network {
             {
                 System.out.println("network error");
             }
-            if(node.next_neighbour==failed_node)
-            {
-                node.next_neighbour = node.myNeighbours.get(0);
-            }
-            if(node.prev_neighbour==failed_node)
-            {
-                node.prev_neighbour = node.myNeighbours.get(0);
-            }
         }
         nodes.remove(failed_node);
+        savedNode.remove(failed_node);
     }
 
 

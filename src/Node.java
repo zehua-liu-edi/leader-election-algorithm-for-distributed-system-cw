@@ -1,3 +1,5 @@
+import com.sun.org.apache.xerces.internal.xs.StringList;
+
 import java.util.*;
 import java.io.*;
 
@@ -22,13 +24,23 @@ public class Node extends Thread {
 
     public Node prev_neighbour;
 
-    public boolean start_election = false;
+    public String parent;
 
-    public boolean fail_election = false;
+    public List<String> children;
+
+    public List<String> children_msg;
+
+    private boolean has_sent = false;
+
+    public boolean start_election = false;
 
     public Node(int id){
 
         this.id = id;
+        parent = "";
+        children = new ArrayList<String>();
+        children_msg = new ArrayList<String>();
+
 
         myNeighbours = new ArrayList<Node>();
         incomingMsg = new ArrayList<String>();
@@ -100,72 +112,89 @@ public class Node extends Thread {
 		this.myNeighbours.add(n);
     }
 
-
-
     public void receiveMsg(String m) {
 		/*
 		Method that implements the reception of an incoming message by a node
 		*/
-		//这里就单纯receive，在线程启动的时候做运算找最大的，每个participant只会发一次，incoming每次保留最大，所以如果收到两次且第二次和自己incoming里的一样，认一个Leader
+
         this.incomingMsg.add(m);
-        System.out.println(id + "has received message " +  m +" in round "+network.getRound());
+        System.out.println(id + "has received message " + m +" in round "+network.getRound());
 
     }
 
     public void sendMsg(String m) {
 		/*
-		Method that implements the sending of a message by a node.
-		The message must be delivered to its recepients through the network.
-		This method need only implement the logic of the network receiving an outgoing message from a node.
-		The remainder of the logic will be implemented in the network class.
+		This is send method. For broadcast message, it sends to broadcast slot in network.
+		For single destination message, it sends to direct deliver slot in network.
 		*/
-		if(m.startsWith("FAILELECT"))
+        if(m.startsWith("TREECONSTRUCT")||m.startsWith("TREELEADER"))
+            network.addBroadcastMessage(id, m);
+        else
         {
-
+            network.addMessage(id, m);
         }
-		network.addMessage(id, m);
-        incomingMsg.clear();
+
     }
 
-    public void general_elect()
-    {
-        incomingMsg.sort(Collections.reverseOrder());
-        System.out.println(id+" has incoming message "+incomingMsg);
 
-        //if not participant send the max of income and id, set participant
+    public void general_elect(String max_recv)
+    {
+        /*
+		This is the basic election which applies in a complete ring
+		*/
+        System.out.println(id+" has incoming message "+max_recv);
+
+        /*
+        if not participant send the max of income and id, set participant
+        */
         if(!participant)
         {
-            System.out.println(id + "not participant and sends "+incomingMsg.get(0) +" to "+ next_neighbour+" in round "+network.getRound());
-            this.sendMsg(Integer.toString(Math.max(Integer.parseInt(incomingMsg.get(0)), id)));
+            System.out.println(id + "not participant and sends "+max_recv +" to "+ next_neighbour+" in round "+network.getRound());
+            this.sendMsg("ELECT "+Integer.toString(Math.max(Integer.parseInt(max_recv), id)));
             this.setParticipant(true);
         }
-        //if participant, send m.id if m.id bigger or do nothing if m.id smaller
+        /*
+        if participant, send m.id if m.id bigger or do nothing if m.id smaller
+        */
         else {
-            if(Integer.parseInt(incomingMsg.get(0))>id)
+            if(Integer.parseInt(max_recv)>id)
             {
-                System.out.println(id + "participant and sends "+incomingMsg.get(0) +" to "+ next_neighbour+" in round "+network.getRound());
-                this.sendMsg(incomingMsg.get(0));
+                System.out.println(id + "participant and sends "+max_recv +" to "+ next_neighbour+" in round "+network.getRound());
+                this.sendMsg("FORWARD "+max_recv);
             }
-            else if(Integer.parseInt(incomingMsg.get(0))==id)
+            else if(Integer.parseInt(max_recv)==id)
             {
                 this.leader = true;
                 this.setLeaderId(id);
+                this.setParticipant(false);
                 this.sendMsg("LEADER "+id);
             }
         }
     }
 
-    public void fail_elect()
+    public void tree_construct()
     {
-        if(fail_election)
-        {
-            for ()
-        }
+        /*
+		This is method to send tree construction message.
+		*/
+        sendMsg("TREECONSTRUCT " + id);
+    }
+
+
+    public void tree_elect()
+    {
+        /*
+		This is method to send election message in tree.
+		*/
+        sendMsg("TREEELECT " + parent +" "+ id);
     }
 
     public void run() {
         while (true)
         {
+            if(network.getRound()==108)
+                System.out.println(id+" !!! "+parent);
+            String max_recv_id="";
             if(network.getRound()==fail_round)
             {
                 network.informNodeFailure(id);
@@ -181,6 +210,13 @@ public class Node extends Thread {
                 this.sendMsg("ELECT "+Integer.toString(id));
                 this.start_election = false;
             }
+
+            if(incomingMsg.size() == 0 && !parent.isEmpty() && children.isEmpty() && !has_sent)
+            {
+                System.out.println(id + "start tree election and send its id to "+ parent+" in round "+network.getRound());
+                this.tree_elect();
+                this.has_sent = true;
+            }
             if(incomingMsg.size() > 0)
             {
                 // judge what type of the message and preprocess it
@@ -190,8 +226,13 @@ public class Node extends Thread {
                     String[] whole_message = message.split("\\s+");
                     if(message.startsWith("ELECT")||message.startsWith("FORWARD"))
                     {
-                        System.out.println();
-                        incomingMsg.set(i, whole_message[1]);
+                        if(max_recv_id.isEmpty())
+                            max_recv_id = whole_message[1];
+                        else
+                        {
+                            if(max_recv_id.compareTo(whole_message[1])<0)
+                                max_recv_id = whole_message[1];
+                        }
                     }
                     /*if a message starts with leader, that means that this election has been done
                     even if other sends elect or forward, it will ignore them and send the leader*/
@@ -211,12 +252,66 @@ public class Node extends Thread {
                         this.setParticipant(false);
                         break;
                     }
+                    else if(whole_message[0].equals("FAIL"))
+                    {
+                        tree_construct();
+                    }
+
+                    else if(whole_message[0].equals("TREECONSTRUCT"))
+                    {
+                        String p_id = whole_message[1];
+                        if(parent.isEmpty())
+                        {
+                            parent = p_id;
+                            sendMsg("TREEREPLAY "+p_id+" "+ id +" AGREE");
+                            sendMsg("TREECONSTRUCT " + id);
+                        }
+//                        else if(!parent.isEmpty())
+//                            sendMsg("TREEREPLAY "+p_id+" "+ id +" DISAGREE");
+                    }
+                    else if(whole_message[0].equals("TREEREPLAY"))
+                    {
+                        String child_id = whole_message[2];
+                        System.out.println(whole_message[3]);
+                        if(whole_message[3].equals("AGREE"))
+                        {
+                            System.out.println(id+ " agree "+child_id +" in round "+ network.getRound());
+                            children.add(child_id);
+                        }
+                    }
+                    else if(whole_message[0].equals("TREEELECT"))
+                    {
+                        String child_id = whole_message[2];
+                        int children_count = children.size();
+                        int max_id = id;
+                        children_msg.add(child_id);
+                        if(children_msg.size() == children_count)
+                        {
+                            if(id==1)
+                            {
+                                System.out.println("1 has "+ children_msg);
+                            }
+                            for(String id: children_msg)
+                            {
+                                if(Integer.parseInt(id)>max_id)
+                                    max_id = Integer.parseInt(id);
+                            }
+                            if(parent.isEmpty())
+                            {
+                                System.out.println("get the new leader "+ max_id);
+
+                            }
+                            else
+                                sendMsg("TREEELECT " + parent +" " + max_id);
+                            children_msg.clear();
+                        }
+                    }
 
                 }
 
-                if(!incomingMsg.isEmpty())
+                if(!max_recv_id.isEmpty())
                 {
-                    general_elect();
+                    general_elect(max_recv_id);
                 }
 
             }
