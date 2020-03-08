@@ -1,7 +1,4 @@
-import java.io.BufferedReader;
-import java.io.FileInputStream;
-import java.io.IOException;
-import java.io.InputStreamReader;
+import java.io.*;
 import java.util.*;
 
 /*
@@ -21,12 +18,16 @@ public class Network {
     private int round;
     private int period = 20;
     private Map<Integer, String> msgToDeliver; //Integer for the id of the sender and String for the message
-    private Map<Integer, String> treeBoardcastMsg; //Integer for the id of the sender and String for the message
+    private Map<Integer, String> treeBoardcastMsg; //Message slot for broadcast
     private List<Integer> elect_round;
     private Map<Integer, ArrayList<String>> elect_nodes;
     private List<Integer> fail_round;
     private Map<Integer, String> fail_node;
     private Map<String, Node> savedNode;
+    private int totalThread;
+    private boolean has_written_partb;
+    private int max_round;
+    int last_opt_round;
     public final String lock = "";
 
     public void NetSimulator() throws IOException, InterruptedException {
@@ -47,43 +48,51 @@ public class Network {
         //map to store which nodes start to elect on specific round
         fail_node = new HashMap<Integer, String>();
 
+        has_written_partb = false;
+
 
         round = 1;
 
         this.parseFile("input/ds_graph.txt");
-        this.parseElectFile("input/ds_fail.txt");
+        this.parseElectFile("input/ds_elect.txt");
 
         for (Node node : nodes) {
             node.setNetwork(this);
         }
 
+        this.appendLog("\nPart A");
         startElection();
+    }
+
+    public synchronized boolean get_partbwritten()
+    {
+        return this.has_written_partb;
+    }
+
+    public synchronized void write_partb()
+    {
+        appendLog("\nPart B");
+        this.has_written_partb = true;
     }
 
     public void startElection(){
         long start_time = System.currentTimeMillis();
         boolean thing_todo = false;
         int leader_node = -1;
+        ThreadGroup threadGroup;
 
         /*
         Code to call methods for parsing the input file, initiating the system and producing the log can be added here.
         */
-        System.out.println("This is round"+round+"\n");
-        while (round<150)
+
+        while (round<max_round)
         {
+            System.out.println("This is round"+round+"\n");
             thing_todo = false;
             start_time = System.currentTimeMillis();
+
             while ((System.currentTimeMillis() - start_time) < period)
             {
-                if(!thing_todo &&elect_round.contains(round))
-                {
-                    System.out.println("This is elect round"+round);
-                    for (int i=0; i<elect_nodes.get(round).size();i++)
-                    {
-                        savedNode.get(elect_nodes.get(round).get(i)).setParticipant(true);
-                        savedNode.get(elect_nodes.get(round).get(i)).setElection(true);
-                    }
-                }
                 if(!thing_todo &&round==1)
                 {
                     for (Node node : nodes)
@@ -100,10 +109,28 @@ public class Network {
                         Network.class.notifyAll();
                     }
                 }
+                if(!thing_todo)
+                {
+                    threadGroup = Thread.currentThread().getThreadGroup();
+                    while(threadGroup.getParent() != null){
+                        threadGroup = threadGroup.getParent();
+                    }
+                    totalThread = threadGroup.activeCount();
+                }
                 thing_todo=true;
+            }
+            if(totalThread==6)
+            {
+                System.out.println("all the nodes quit, network quits");
+                break;
             }
             round++;
         }
+        for (Node node:nodes)
+        {
+            node.interrupt();
+        }
+        appendLog("simulation completed");
     }
 
     public int getRound()
@@ -146,6 +173,9 @@ public class Network {
                 head_node = savedNode.get(node_in_line[0]);
             }
 
+            /*
+            add next and previous node
+             */
             if(start_node==null)
                 start_node = head_node;
 
@@ -157,7 +187,6 @@ public class Network {
                     savedNode.get(previous_node).addNeighbour(head_node);
                 if(!head_node.getNeighbors().contains(savedNode.get(previous_node)))
                     head_node.addNeighbour(savedNode.get(previous_node));
-                System.out.println("node "+previous_node+" and "+node_in_line[0]+" becomes neighbours");
             }
             previous_node = node_in_line[0];
 
@@ -167,7 +196,6 @@ public class Network {
             {
                 if(!savedNode.containsKey(node_in_line[i]))
                 {
-                    System.out.println(node_in_line[i]+" is not in hash table");
                     nei_node = new Node(Integer.parseInt(node_in_line[i]));
                     savedNode.put(node_in_line[i],nei_node);
                     nodes.add(nei_node);
@@ -175,10 +203,8 @@ public class Network {
                 }
                 else
                 {
-                    System.out.println(node_in_line[i]+" is already in hash table");
                     nei_node = savedNode.get(node_in_line[i]);
                 }
-                System.out.println("node "+node_in_line[0]+" add neighbor node "+node_in_line[i]);
                 head_node.addNeighbour(nei_node);
             }
 
@@ -191,7 +217,6 @@ public class Network {
             start_node.prev_neighbour = savedNode.get(previous_node);
             start_node.addNeighbour(savedNode.get(previous_node));
             savedNode.get(previous_node).addNeighbour(start_node);
-            System.out.println("node "+previous_node+" and "+start_node+" becomes neighbours");
         }
 
         //close
@@ -210,7 +235,7 @@ public class Network {
         String str;
 
         String elect_parse = "ELECT";
-
+        
         String fail_parse = "FAIL";
 
 
@@ -218,35 +243,37 @@ public class Network {
 
             String[] element_in_line = str.split("\\s+");
 
-            if(element_in_line[0].equals(elect_parse))
+            String opt = element_in_line[0];
+
+            String opt_round = element_in_line[1];
+
+            last_opt_round = Integer.parseInt(opt_round);
+
+            if(opt.equals(elect_parse))
             {
-                elect_round.add(Integer.parseInt(element_in_line[1]));
-
-                ArrayList<String> temp = new ArrayList<String>();
-
-                for (int i = 2; i < element_in_line.length; i++) {
-
-                    System.out.println(element_in_line[i] + " is going to start elect in round " + element_in_line[1]);
-
-                    temp.add(element_in_line[i]);
+                for (int i=2; i<element_in_line.length;i++)
+                {
+                    savedNode.get(element_in_line[i]).setElectRound(Integer.parseInt(opt_round));
                 }
-                elect_nodes.put(Integer.parseInt(element_in_line[1]), temp);
             }
 
-            if(element_in_line[0].equals(fail_parse))
+            if(opt.equals(fail_parse))
             {
-
-                savedNode.get(element_in_line[2]).setFail_round(Integer.parseInt(element_in_line[1]));
-
+                savedNode.get(element_in_line[2]).setFailRound(Integer.parseInt(opt_round));
             }
 
         }
+
+        /*
+        calculate the max round for the general elect and fail elect(by tree algorithm)
+        then quit the all the threads after max round
+         */
+        max_round = last_opt_round+3*getNetSize()+1;
 
         //close
         inputStream.close();
         bufferedReader.close();
     }
-
 
     public synchronized void addMessage(int id, String m){
 		/*
@@ -255,7 +282,6 @@ public class Network {
 		*/
         this.msgToDeliver.put(id, m);
     }
-
 
     public synchronized void addBroadcastMessage(int id, String m){
 		/*
@@ -267,9 +293,7 @@ public class Network {
 
     public synchronized void deliverTreeBroadcastMessages() {
 		/*
-		At each round, the network delivers all the messages that it has collected from the nodes.
-		Implement this logic here.
-		The network must ensure that a node can send only to its neighbours, one message per round per neighbour.
+		This is to broadcast message.
 		0 means no message to send or the sender will send the message to all his neighbours
 		*/
 
@@ -277,7 +301,7 @@ public class Network {
             for (Integer key : treeBoardcastMsg.keySet()) {
                 String message_to_deliver = treeBoardcastMsg.get(key);
                 Node sender = savedNode.get(Integer.toString(key));
-                Node parent = savedNode.get(sender.parent);
+
                 /*
                 If message equals to zero, it means no broadcast message will be sent in this round
                 */
@@ -287,6 +311,10 @@ public class Network {
                 }
                 if(message_to_deliver.startsWith("TREECONSTRUCT"))
                 {
+                    /*
+                    tree construct
+                     */
+                    Node parent = savedNode.get(sender.parent);
                     for (Node node:sender.getNeighbors())
                     {
                         if(node!=parent)
@@ -295,9 +323,25 @@ public class Network {
                 }
                 else if(message_to_deliver.startsWith("TREELEADER"))
                 {
-                    for (String children : sender.children)
+                    /*
+                    tree leader is to be sent to child to inform them the new leader
+                     */
+                    String[] whole_message = message_to_deliver.split("\\s+");
+                    for (int i=2; i<whole_message.length;i++)
                     {
-                        Node child = savedNode.get(children);
+                        Node child = savedNode.get(whole_message[i]);
+                        child.receiveMsg(message_to_deliver);
+                    }
+                }
+                else  if(message_to_deliver.startsWith("BREAK"))
+                {
+                    /*
+                    break message is sent to child to let them quit the network
+                     */
+                    String[] whole_message = message_to_deliver.split("\\s+");
+                    for (int i=1; i<whole_message.length;i++)
+                    {
+                        Node child = savedNode.get(whole_message[i]);
                         child.receiveMsg(message_to_deliver);
                     }
                 }
@@ -312,41 +356,39 @@ public class Network {
 
     public synchronized void deliverMessages() {
 		/*
-		At each round, the network delivers all the messages that it has collected from the nodes.
-		Implement this logic here.
-		The network must ensure that a node can send only to its neighbours, one message per round per neighbour.
-		0 means no message to send or the sender will send the message to all his neighbours
+		This is to deliver message that has single destination.
+		0 means no message to send or the sender will send the message to all his neighbours.
 		*/
+        try {
 
+            for (Integer key : msgToDeliver.keySet()) {
 
-            try {
-                for (Integer key : msgToDeliver.keySet()) {
-                    String message_to_deliver = msgToDeliver.get(key);
-                    String[] whole_message = message_to_deliver.split("\\s+");
-                    Node sender = savedNode.get(Integer.toString(key));
-                    Node parent = savedNode.get(sender.parent);
-                    if(message_to_deliver.equals(Character.toString('0')))
-                    {
-                        continue;
-                    }
-                    else if(message_to_deliver.startsWith("TREEREPLAY"))
-                    {
-                        System.out.println("wants to send "+message_to_deliver);
-                        String node_to_send = whole_message[1];
-                        savedNode.get(node_to_send).receiveMsg(message_to_deliver);
-                    }
-                    else if(message_to_deliver.startsWith("TREEELECT"))
-                    {
-                        if(parent!=null)
-                            parent.receiveMsg(message_to_deliver);
-                    }
-                    else
-                        sender.getNextNode().receiveMsg(message_to_deliver);
-                    msgToDeliver.put(key, Character.toString('0'));
+                String message_to_deliver = msgToDeliver.get(key);
+                String[] whole_message = message_to_deliver.split("\\s+");
+                Node sender = savedNode.get(Integer.toString(key));
+                if(message_to_deliver.equals(Character.toString('0')))
+                {
+                    continue;
                 }
-            } catch (Exception e) {
-                e.printStackTrace();
+                else if(message_to_deliver.startsWith("TREEREPLAY")||message_to_deliver.startsWith("ACK"))
+                {
+                    String node_to_send = whole_message[1];
+                    savedNode.get(node_to_send).receiveMsg(message_to_deliver);
+                }
+                else if(message_to_deliver.startsWith("TREEELECT"))
+                {
+                    Node parent = savedNode.get(sender.parent);
+                    if(parent!=null)
+                        parent.receiveMsg(message_to_deliver);
+                }
+                else{
+                    sender.getNextNode().receiveMsg(message_to_deliver);
+                }
+                msgToDeliver.put(key, Character.toString('0'));
             }
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
 
 
     }
@@ -356,18 +398,32 @@ public class Network {
 		Method to inform the neighbours of a failed node about the event.
 		*/
         Node failed_node = savedNode.get(Integer.toString(id));
-        failed_node.next_neighbour.receiveMsg("FAIL " + id);
-        for (Node node : failed_node.getNeighbors())
+        for (int i=0; i<failed_node.myNeighbours.size();i++)
         {
-            node.myNeighbours.remove(failed_node);
-            if(node.myNeighbours.isEmpty())
+            if(i==0)
             {
-                System.out.println("network error");
+                failed_node.myNeighbours.get(i).receiveMsg("FAIL " + id + " START ELECT");
             }
+            else
+                failed_node.myNeighbours.get(i).receiveMsg("FAIL " + id);
         }
+        savedNode.remove(Integer.toString(id));
         nodes.remove(failed_node);
-        savedNode.remove(failed_node);
+
     }
+
+    public synchronized void appendLog(String newLog)
+    {
+        try {
+            BufferedWriter bw = new BufferedWriter(new FileWriter("log.txt", true));
+            bw.write(newLog);
+            bw.newLine();
+            bw.close();
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+    }
+
 
 
     public static void main(String[] args) throws IOException, InterruptedException {
